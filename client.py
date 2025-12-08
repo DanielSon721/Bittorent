@@ -468,12 +468,13 @@ class BitTorrentClient:
         try:
             if not self.piece_manager.is_piece_complete(index):
                 return
+            peer_id = f"{peer.ip}:{peer.port}"
             piece_data = self.disk.read_piece(index, self.torrent.piece_length)
             block = piece_data[begin : begin + length]
             peer.send_piece(index, begin, block)
             with self._lock:
                 self.uploaded += len(block)
-            print(f"UPLOAD | sent piece={index} off={begin} len={len(block)} to {peer.ip}:{peer.port}")
+            print(f"UPLOAD | {peer_id} piece={index} off={begin} len={len(block)} uploaded={self.uploaded}")
         except Exception as e:
             print(f"Error handling request while uploading: {e}")
 
@@ -501,7 +502,7 @@ class BitTorrentClient:
                         stall_ticks = 0
                 print(
                     f"------------------------------------------\nPROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
-                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count} | Uploaded: {self.uploaded} bytes\n------------------------------------------"
+                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}\n------------------------------------------"
                 )
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
