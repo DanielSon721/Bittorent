@@ -29,26 +29,26 @@ class PeerConnection:
             self.sock = socket.socket(family, socket.SOCK_STREAM)
             self.sock.settimeout(timeout)
 
-            print(f"[TCP] Connecting to {self.ip}:{self.port}...")   # debug
+            print(f"Connecting to {self.ip}:{self.port}...")   # debug
             if family == socket.AF_INET6:
                 self.sock.connect((self.ip, self.port, 0, 0))
             else:
                 self.sock.connect((self.ip, self.port))
-            print(f"[TCP] Connected to {self.ip}:{self.port}, sending handshake...")  # debug
+            print(f"Connected to {self.ip}:{self.port}, sending handshake...")  # debug
 
             self._send_handshake()
 
             if not self._recv_handshake():
-                print(f"[TCP] Handshake rejected by peer {self.ip}:{self.port}")
+                print(f"Handshake rejected by peer {self.ip}:{self.port}")
                 self.close()
                 return False
 
-            print(f"[TCP] Handshake success {self.ip}:{self.port}")
+            print(f"Handshake success {self.ip}:{self.port}")
             self.connected = True
             return True
 
         except Exception as e:
-            print(f"[TCP] Connection failure {self.ip}:{self.port} -> {e}")  # KEY FIX
+            print(f"Connection failure {self.ip}:{self.port} -> {e}")  # KEY FIX
             self.close()
             return False
 

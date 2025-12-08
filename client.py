@@ -51,7 +51,7 @@ class BitTorrentClient:
 
         try:
             # announce to trackers
-            print("\n[TRACKER] Announcing to trackers (started)...")
+            print("\nAnnouncing to trackers (started)...")
             left = max(0, self.torrent.length - self.downloaded)
             peer_list = []
 
@@ -61,38 +61,37 @@ class BitTorrentClient:
                     peers = self.tracker.announce(downloaded=self.downloaded, left=left, uploaded=self.uploaded, event="started")
                     peer_list.extend(peers)
                 except Exception as e:
-                    print(f"[TRACKER] Failed to announce to {tracker_url}: {e}")
+                    print(f"Failed to announce to {tracker_url}: {e}")
             
             # remove duplicates
             peer_list = list(set(peer_list))
             random.shuffle(peer_list)
 
             if not peer_list:
-                print("[ERROR] No peers received from any tracker. Exiting.")
+                print("ERROR | No peers received from any tracker. Exiting.")
                 return
 
-            print(f"[TRACKER] Total peers received: {len(peer_list)}")
-            print(f"[DEBUG] First 10 peers: {peer_list[:10]}")
+            print(f"TRACKER | Total peers received: {len(peer_list)}")
 
             self._start_listener()
 
             # connect to peers
-            print("\n[PEERS] Connecting to peers (capped)...")
+            print("\nPEERS | Connecting to peers (capped)...")
             for ip, port in peer_list[:50]:
                 if self._stop or len(self.peers) >= self.max_peers:
                     break
                 try:
                     self._connect_to_peer(ip, port)
                 except Exception as e:
-                    print(f"[PEERS] Connect error to {ip}:{port} - {e}")
+                    print(f"Connect error to {ip}:{port} - {e}")
 
-            print(f"[PEERS] Connected to {len(self.peers)} peers")
+            print(f"Connected to {len(self.peers)} peers")
             if not self.peers:
-                print("[ERROR] Could not connect to any peers. Exiting.")
+                print("ERROR | Could not connect to any peers. Exiting.")
                 return
 
             # start peer worker threads
-            print("\n[DOWNLOAD] Starting peer worker threads...")
+            print("\nStarting peer worker threads...")
             for peer in list(self.peers):
                 t = threading.Thread(
                     target=self._peer_worker,
@@ -128,7 +127,7 @@ class BitTorrentClient:
             self._stop = True
 
         finally:
-            print("\n[CLEANUP] Shutting down client...")
+            print("\nShutting down client...")
             self._cleanup()
 
 
@@ -182,7 +181,7 @@ class BitTorrentClient:
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server.bind(("0.0.0.0", self.listen_port))
             server.listen(50)
-            print(f"[LISTEN] Accepting inbound peers on port {self.listen_port}...")
+            print(f"Accepting inbound peers on port {self.listen_port}...")
 
             while not self._stop:
                 try:
@@ -208,35 +207,35 @@ class BitTorrentClient:
 
     # outbound peer connect
     def _connect_to_peer(self, ip: str, port: int) -> bool:
-        print(f"[CONNECT] Trying {ip}:{port}")  # debug
+        print(f"CONNECT | Trying {ip}:{port}")  # debug
         try:
             pc = PeerConnection(ip, port, self.torrent.info_hash, self.peer_id)
             if pc.connect(timeout=self.connect_timeout):
-                print(f"[CONNECT] TCP connected {ip}:{port}")  # debug
+                print(f"CONNECT | TCP connected {ip}:{port}")
                 try:
                     bitfield = self.piece_manager.get_bitfield()
                     pc.send_bitfield(bitfield)
                 except Exception as e:
-                    print(f"[CONNECT] Failed to send bitfield to {ip}:{port} -> {e}")
+                    print(f"CONNECT | Failed to send bitfield to {ip}:{port} -> {e}")
 
                 pc.send_interested()
                 with self._lock:
                     self.peers.append(pc)
 
-                print(f"[+] Handshake OK {ip}:{port}")  # debug
+                print(f"[+] Handshake success {ip}:{port}")
                 return True
             else:
-                print(f"[-] TCP failed {ip}:{port}")
+                print(f"[-] TCP fail {ip}:{port}")
                 return False
 
         except Exception as e:
-            print(f"[CONNECT-FAIL] {ip}:{port} -> {e}")
+            print(f"CONNECT-FAIL | {ip}:{port} -> {e}")
             return False
 
     # peer worker
     def _peer_worker(self, peer: PeerConnection):
         peer_id = f"{peer.ip}:{peer.port}"
-        print(f"[WORKER] Started thread for {peer_id}")
+        print(f"Started thread for {peer_id}")
 
         request_queue = []
         BLOCK_SIZE = 16384
@@ -255,13 +254,13 @@ class BitTorrentClient:
                     if msg is not None:
                         # prevent printing full blocks
                         if msg.get("type") == "piece":
-                            print(f"[{peer_id}] <-- PIECE index={msg['index']} begin={msg['begin']} size={len(msg['block'])} bytes")
+                            print(f"[{peer_id}] PIECE index={msg['index']} begin={msg['begin']} size={len(msg['block'])} bytes")
                         else:
                             if msg is not None:
                                 if msg.get("type") == "piece":
-                                    print(f"[{peer_id}] <-- PIECE index={msg['index']} begin={msg['begin']} size={len(msg['block'])}")
+                                    print(f"[{peer_id}] PIECE index={msg['index']} begin={msg['begin']} size={len(msg['block'])}")
                                 else:
-                                    print(f"[{peer_id}] <-- {msg}")
+                                    print(f"[{peer_id}] {msg}")
                 except Exception as e:
                     print(f"[{peer_id}] Error receiving message: {e}")
                     break
@@ -321,15 +320,15 @@ class BitTorrentClient:
 
                                 piece_data = self.piece_manager.get_piece_data(piece_index)
                                 if self._verify_piece(piece_index, piece_data):
-                                    print(f"[{peer_id}] VERIFIED ✓ writing to disk")
+                                    print(f"[{peer_id}] VERIFIED ✓ writing to disk...")
                                     self._write_piece(piece_index, piece_data)
                                     self._broadcast_have(piece_index)
                                 else:
-                                    print(f"[{peer_id}] HASH FAIL ✗ resetting piece")
+                                    print(f"[{peer_id}] HASH FAIL ✗ resetting piece...")
                                     self.piece_manager.reset_piece(piece_index)
 
                         except Exception as e:
-                            print(f"[{peer_id}] PIECE HANDLING ERROR: {e}")
+                            print(f"{peer_id} | PIECE HANDLING ERROR: {e}")
                             import traceback; traceback.print_exc()
                             continue
 
@@ -395,7 +394,7 @@ class BitTorrentClient:
                 print(f"[{peer_id}] Worker thread error: {e}")
 
         finally:
-            print(f"[WORKER] Stopped thread for {peer_id}")
+            print(f"Stopped thread for {peer_id}")
             try:
                 peer.close()
             except Exception:
@@ -486,7 +485,7 @@ class BitTorrentClient:
                     percent = (current / self.torrent.length) * 100 if self.torrent.length else 0
                     peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
                 print(
-                    f"[PROGRESS] {percent:.3f}% | {current}/{self.torrent.length} bytes | "
+                    f"PROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
                     f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}"
                 )
 
@@ -496,7 +495,7 @@ class BitTorrentClient:
 
     def _announce_completed(self):
         try:
-            print("[TRACKER] Announcing completion to tracker...")
+            print("Announcing completion to tracker...")
             self.tracker.announce(
                 downloaded=self.downloaded,
                 left=0,
@@ -504,7 +503,7 @@ class BitTorrentClient:
                 event="completed",
             )
         except Exception as e:
-            print(f"[TRACKER] Completion announce failed: {e}")
+            print(f"Completion announce failed: {e}")
 
     # cleanup
     def _cleanup(self):
@@ -534,15 +533,6 @@ class BitTorrentClient:
         except Exception:
             pass
 
-        if self.start_time:
-            elapsed = time.time() - self.start_time
-            print(f"\n[STATS] Downloaded: {self.downloaded} bytes")
-            print(f"[STATS] Uploaded: {self.uploaded} bytes")
-            print(f"[STATS] Time: {elapsed:.1f} seconds")
-            if elapsed > 0:
-                print(f"[STATS] Average speed: {self.downloaded/elapsed/1024:.1f} KB/s")
-
     # stop client
     def stop(self):
-        print("\n[STOP] Stopping client...")
         self._stop = True
