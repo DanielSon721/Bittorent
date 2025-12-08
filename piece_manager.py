@@ -1,19 +1,28 @@
-# piece_manager.py
 import hashlib
+import time
 from typing import List, Optional
 from disk_io import DiskIO
 
+BLOCK_SIZE = 16384  # 16kb block
+
 class PieceManager:
+    # tracks piece status and data
     def __init__(self, torrent_meta):
-        self.torrent = torrent_meta  # Torrent metadata
-        self.total_pieces = torrent_meta.num_pieces()  # Number of pieces
+        self.torrent = torrent_meta  # torrent meta
+        self.total_pieces = torrent_meta.num_pieces()  # piece count
         self.pieces_state = ["missing"] * self.total_pieces  # missing/requested/complete
 
         self.writer = DiskIO(torrent_meta.name, torrent_meta.length)
 
-        self.buffers = [dict() for _ in range(self.total_pieces)]
+        self.buffers = [dict() for _ in range(self.total_pieces)]  # not used
         self.pieces_data = [None] * self.total_pieces
-        self.blocks_received = [set() for _ in range(self.total_pieces)]
+        self.blocks_received = [set() for _ in range(self.total_pieces)]  # received ranges
+
+        # block tracking
+        self.block_states = [dict() for _ in range(self.total_pieces)]  # offset -> meta
+
+        # availability counts (rarest-first)
+        self.availability = [0] * self.total_pieces
 
     def next_piece_for_peer(self, peer_bitfield: bytes) -> Optional[int]:
         binary_bits = ''.join(f"{byte:08b}" for byte in peer_bitfield)
@@ -52,11 +61,67 @@ class PieceManager:
         if self.pieces_state[index] == "missing":
             self.pieces_state[index] = "requested"
 
+    # availability helpers
+    def update_peer_bitfield(self, old: List[bool], new: List[bool]):
+        if len(new) < self.total_pieces:
+            new = new + [False] * (self.total_pieces - len(new))
+        if len(old) < self.total_pieces:
+            old = old + [False] * (self.total_pieces - len(old))
+        for i in range(self.total_pieces):
+            if not old[i] and new[i]:
+                self.availability[i] += 1
+            elif old[i] and not new[i]:
+                self.availability[i] = max(0, self.availability[i] - 1)
+
+    def update_have(self, piece_index: int, already_had: bool):
+        if piece_index >= self.total_pieces:
+            return
+        if not already_had:
+            self.availability[piece_index] += 1
+
+    def get_availability(self, piece_index: int) -> int:
+        if piece_index >= self.total_pieces:
+            return 0
+        return self.availability[piece_index]
+
     def has_block(self, index: int, offset: int) -> bool:
         for start, end in self.blocks_received[index]:
             if start <= offset < end:
                 return True
         return False
+
+    # block helpers
+    def mark_block_requested(self, index: int, offset: int, length: int):
+        self.block_states[index][offset] = {"state": "pending", "ts": time.time(), "length": length}
+
+    def mark_block_received(self, index: int, offset: int, length: int):
+        self.block_states[index][offset] = {"state": "full", "ts": time.time(), "length": length}
+
+    def is_block_pending(self, index: int, offset: int) -> bool:
+        meta = self.block_states[index].get(offset)
+        return bool(meta) and meta.get("state") == "pending"
+
+    def is_block_stale(self, index: int, offset: int, max_age: float = 15.0) -> bool:
+        meta = self.block_states[index].get(offset)
+        if not meta or meta.get("state") != "pending":
+            return False
+        return (time.time() - meta.get("ts", 0.0)) > max_age
+
+    def clear_block_pending(self, index: int, offset: int):
+        if offset in self.block_states[index]:
+            self.block_states[index].pop(offset, None)
+
+    def reclaim_stale_blocks(self, max_age: float = 15.0):
+        now = time.time()
+        for idx in range(self.total_pieces):
+            if self.pieces_state[idx] != "requested":
+                continue
+            stale_offsets = [
+                off for off, meta in self.block_states[idx].items()
+                if meta.get("state") == "pending" and (now - meta.get("ts", 0.0)) > max_age
+            ]
+            for off in stale_offsets:
+                self.block_states[idx].pop(off, None)
 
     def add_block(self, index, begin, block):
         piece_len = self.piece_length(index)
@@ -67,6 +132,7 @@ class PieceManager:
         end = begin + len(block)
         self.pieces_data[index][begin:end] = block
         self.blocks_received[index].add((begin, end))
+        self.mark_block_received(index, begin, len(block))
 
         merged = sorted(self.blocks_received[index])
         current_end = 0
@@ -86,6 +152,7 @@ class PieceManager:
         self.buffers[index].clear()
         self.pieces_data[index] = None
         self.blocks_received[index].clear()
+        self.block_states[index].clear()
 
     def num_completed(self) -> int:
         return self.pieces_state.count("complete")
@@ -99,4 +166,3 @@ class PieceManager:
     def mark_piece_in_progress(self, index: int):
         if self.pieces_state[index] == "missing":
             self.pieces_state[index] = "requested"
-

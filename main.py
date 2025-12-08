@@ -1,4 +1,3 @@
-# main.py
 import argparse
 from torrent import TorrentMeta
 from tracker import TrackerClient
@@ -28,4 +27,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

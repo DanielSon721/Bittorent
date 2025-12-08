@@ -9,6 +9,7 @@ import random
 import time
 
 class TrackerClient:
+    # tracker client for http/https/udp
     _UDP_CONNECT_MAGIC = 0x41727101980
     _UDP_CONNECT_ACTION = 0
     _UDP_ANNOUNCE_ACTION = 1
@@ -244,12 +245,19 @@ class TrackerClient:
 
             peers_data=tracker_response[b"peers"]
 
+            peers: List[Tuple[str,int]] = []
+
             if isinstance(peers_data,bytes):
-                return self._parse_compact_peers(peers_data)
+                peers.extend(self._parse_compact_peers(peers_data))
             elif isinstance(peers_data,list):
-                return self._parse_dict_peers(peers_data)
+                peers.extend(self._parse_dict_peers(peers_data))
             else:
                 raise ValueError("Unknown 'peers' format in tracker response")
+
+            if b"peers6" in tracker_response:
+                peers.extend(self._parse_compact_peers6(tracker_response[b"peers6"]))
+
+            return peers
 
         except Exception as e:
             print(f"[TRACKER] Response parse error: {e}")
@@ -267,6 +275,23 @@ class TrackerClient:
             peers.append((ip,port))
         return peers
 
+    def _parse_compact_peers6(self, peers_data: bytes) -> List[Tuple[str,int]]:
+        peers=[]
+        if len(peers_data) % 18 != 0:
+            peers_data = peers_data[: (len(peers_data)//18) * 18]
+        count=len(peers_data)//18
+        for i in range(count):
+            off=i*18
+            ip_bytes=peers_data[off:off+16]
+            port_bytes=peers_data[off+16:off+18]
+            try:
+                ip=socket.inet_ntop(socket.AF_INET6, ip_bytes)
+            except Exception:
+                continue
+            port=struct.unpack("!H",port_bytes)[0]
+            peers.append((ip,port))
+        return peers
+
     def _parse_dict_peers(self,peers_data:list)->List[Tuple[str,int]]:
         peers=[]
         for p in peers_data:
@@ -280,4 +305,3 @@ class TrackerClient:
 
     def get_interval(self)->int:
         return int(self._interval)
-

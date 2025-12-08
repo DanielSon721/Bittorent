@@ -1,13 +1,9 @@
-# peer_connection.py
 import socket
 import struct
 from typing import Optional, List
 
 class PeerConnection:
-    """
-    TCP connection wrapper that implements BitTorrent wire protocol messaging.
-    Minimal but compatible with your client.py interface.
-    """
+    # wraps tcp socket for peer messages
 
     def __init__(self, ip: str, port: int, info_hash: bytes, peer_id: bytes):
         self.ip = ip
@@ -29,12 +25,16 @@ class PeerConnection:
     def connect(self, timeout=5.0) -> bool:
         import socket
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            family = socket.AF_INET6 if ":" in self.ip else socket.AF_INET
+            self.sock = socket.socket(family, socket.SOCK_STREAM)
             self.sock.settimeout(timeout)
 
-            print(f"[TCP] Connecting to {self.ip}:{self.port}...")   # DEBUG
-            self.sock.connect((self.ip, self.port))
-            print(f"[TCP] Connected to {self.ip}:{self.port}, sending handshake...")  # DEBUG
+            print(f"[TCP] Connecting to {self.ip}:{self.port}...")   # debug
+            if family == socket.AF_INET6:
+                self.sock.connect((self.ip, self.port, 0, 0))
+            else:
+                self.sock.connect((self.ip, self.port))
+            print(f"[TCP] Connected to {self.ip}:{self.port}, sending handshake...")  # debug
 
             self._send_handshake()
 
@@ -197,4 +197,3 @@ class PeerConnection:
 
     def has_piece(self,index:int)->bool:
         return index < len(self.bitfield) and self.bitfield[index] == True
-

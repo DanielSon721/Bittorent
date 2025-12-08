@@ -12,6 +12,7 @@ class TorrentFile:
         return os.path.join(*self.path)
 
 class TorrentMeta:
+    # holds parsed torrent info
     def __init__(self, raw, info_hash: bytes, piece_length: int, pieces: List[bytes],
                  announce: str, name: str, length: int,
                  files: Union[None, List['TorrentFile']] = None,
@@ -21,7 +22,7 @@ class TorrentMeta:
         self.piece_length = piece_length
         self.pieces = pieces
         self.announce = announce
-        self.announce_list = announce_list or [announce]   # <-- store trackers here
+        self.announce_list = announce_list or [announce]   # tracker list
         self.name = name
         self.length = length
         self.files = files
@@ -41,7 +42,7 @@ class TorrentMeta:
 
         announce = raw[b"announce"].decode()
 
-        # ANNOUNCE LIST SUPPORT
+        # collect announce list
         announce_list = [announce]
         if b"announce-list" in raw:
             for tier in raw[b"announce-list"]:
@@ -52,7 +53,7 @@ class TorrentMeta:
 
         name = info[b"name"].decode()
 
-        # --- keep original single/multifile logic ---
+        # handle single or multi file
         if b"length" in info:
             length = info[b"length"]
             files = None
@@ -72,7 +73,6 @@ class TorrentMeta:
                    files=files, announce_list=announce_list)
 
     def generate_peer_id(self) -> bytes:
-        """Generate a unique 20-byte peer ID for this client."""
         return b"-PC0001-" + os.urandom(12)
 
     def num_pieces(self) -> int:

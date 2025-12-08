@@ -1,14 +1,7 @@
-# disk_io.py
 import os
 
 class DiskIO:
-    """
-    Handles reading/writing pieces to the target file for single-file torrents.
-    Expected usage:
-        disk = DiskIO("ubuntu.iso", total_length)
-        disk.write_piece(index, data, piece_length)
-        disk.finalize()
-    """
+    # handles file io for pieces
     def __init__(self, path: str, total_length: int, preallocate: bool = True):
         self.path = path
         self.total_length = total_length
@@ -20,6 +13,7 @@ class DiskIO:
             self._preallocate_file()
 
     def _preallocate_file(self):
+        # grow file to full size
         self.file.seek(self.total_length - 1)
         self.file.write(b"\x00")
         self.file.flush()
@@ -48,4 +42,3 @@ class DiskIO:
             self.finalize()
         except:
             pass
-
