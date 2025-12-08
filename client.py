@@ -9,7 +9,7 @@ from disk_io import DiskIO
 import hashlib
 
 class BitTorrentClient:
-    def __init__(self, torrent, peer_id: bytes, listen_port: int, output_path: Optional[str] = None, max_peers: int = 20):
+    def __init__(self, torrent, peer_id: bytes, listen_port: int, output_path: Optional[str] = None, max_peers: int = 100):
         self.torrent = torrent
         self.peer_id = peer_id  # peer id
         self.listen_port = listen_port  # listen port
@@ -42,6 +42,7 @@ class BitTorrentClient:
         # limits
         self.max_peers = max_peers
         self.connect_timeout = 5.0
+        self._flush_requests = False
 
     # main entry
     def run(self):
@@ -51,7 +52,7 @@ class BitTorrentClient:
 
         try:
             # announce to trackers
-            print("\nAnnouncing to trackers (started)...")
+            print("\nAnnouncing to trackers...")
             left = max(0, self.torrent.length - self.downloaded)
             peer_list = []
 
@@ -76,14 +77,14 @@ class BitTorrentClient:
             self._start_listener()
 
             # connect to peers
-            print("\nPEERS | Connecting to peers (capped)...")
+            print("\nPEERS | Connecting to peers...")
             for ip, port in peer_list[:50]:
                 if self._stop or len(self.peers) >= self.max_peers:
                     break
                 try:
                     self._connect_to_peer(ip, port)
                 except Exception as e:
-                    print(f"Connect error to {ip}:{port} - {e}")
+                    pass
 
             print(f"Connected to {len(self.peers)} peers")
             if not self.peers:
@@ -136,7 +137,7 @@ class BitTorrentClient:
         def reannounce():
             if self._stop:
                 return
-            print("[TRACKER] Re-announcing to trackers...")
+            print("Re-announcing to trackers...")
             left = max(0, self.torrent.length - self.downloaded)
 
             peer_list = []
@@ -170,6 +171,26 @@ class BitTorrentClient:
         self._reannounce_timer = threading.Timer(interval, reannounce)
         self._reannounce_timer.daemon = True
         self._reannounce_timer.start()
+
+    def _reannounce_now(self):
+        left = max(0, self.torrent.length - self.downloaded)
+        peer_list = []
+        for tracker_url in self.torrent.announce_list:
+            self.tracker.announce_url = tracker_url
+            try:
+                peers = self.tracker.announce(downloaded=self.downloaded, left=left, uploaded=self.uploaded)
+                peer_list.extend(peers)
+            except Exception:
+                continue
+        peer_list = list(set(peer_list))
+        random.shuffle(peer_list)
+        for ip, port in peer_list:
+            if self._stop or len(self.peers) >= self.max_peers:
+                break
+            try:
+                self._connect_to_peer(ip, port)
+            except Exception:
+                pass
 
 
     # accept inbound peers
@@ -207,29 +228,25 @@ class BitTorrentClient:
 
     # outbound peer connect
     def _connect_to_peer(self, ip: str, port: int) -> bool:
-        print(f"CONNECT | Trying {ip}:{port}")  # debug
         try:
             pc = PeerConnection(ip, port, self.torrent.info_hash, self.peer_id)
             if pc.connect(timeout=self.connect_timeout):
-                print(f"CONNECT | TCP connected {ip}:{port}")
                 try:
                     bitfield = self.piece_manager.get_bitfield()
                     pc.send_bitfield(bitfield)
-                except Exception as e:
-                    print(f"CONNECT | Failed to send bitfield to {ip}:{port} -> {e}")
+                except Exception:
+                    pass
 
                 pc.send_interested()
                 with self._lock:
                     self.peers.append(pc)
 
-                print(f"[+] Handshake success {ip}:{port}")
+                print(f"CONNECT | {ip}:{port} ok")
                 return True
             else:
-                print(f"[-] TCP fail {ip}:{port}")
                 return False
 
-        except Exception as e:
-            print(f"CONNECT-FAIL | {ip}:{port} -> {e}")
+        except Exception:
             return False
 
     # peer worker
@@ -242,6 +259,8 @@ class BitTorrentClient:
         MAX_PENDING = 32
         last_keepalive = time.time()
         KEEPALIVE_INTERVAL = 120
+        last_data = time.time()
+        STALL_TIMEOUT = 15
 
         try:
             while (
@@ -249,18 +268,13 @@ class BitTorrentClient:
                 and not self.piece_manager.is_complete()
                 and peer.connected
             ):
+                if self._flush_requests:
+                    for pi, off, ln in list(request_queue):
+                        self.piece_manager.clear_block_pending(pi, off)
+                        request_queue.remove((pi, off, ln))
+                    self._flush_requests = False
                 try:
                     msg = peer.receive_message(timeout=0.2)
-                    if msg is not None:
-                        # prevent printing full blocks
-                        if msg.get("type") == "piece":
-                            print(f"[{peer_id}] PIECE index={msg['index']} begin={msg['begin']} size={len(msg['block'])} bytes")
-                        else:
-                            if msg is not None:
-                                if msg.get("type") == "piece":
-                                    print(f"[{peer_id}] PIECE index={msg['index']} begin={msg['begin']} size={len(msg['block'])}")
-                                else:
-                                    print(f"[{peer_id}] {msg}")
                 except Exception as e:
                     print(f"[{peer_id}] Error receiving message: {e}")
                     break
@@ -298,33 +312,25 @@ class BitTorrentClient:
                         peer.bitfield = msg["bitfield"]
                         # update availability counts
                         self.piece_manager.update_peer_bitfield(old, peer.bitfield)
-                        print(
-                            f"[{peer_id}] Received bitfield: "
-                            f"{sum(1 for b in peer.bitfield if b)}/{len(peer.bitfield)} pieces"
-                        )
 
                     elif mtype == "piece":
                         try:
                             piece_index = msg["index"]
                             begin = msg["begin"]
                             block = msg["block"]
-                            print(f"[{peer_id}] blk {begin//16384+1}/16 received for piece {piece_index}")
-
                             complete = self.piece_manager.add_block(piece_index, begin, block)
+                            last_data = time.time()
                             if (piece_index, begin, len(block)) in request_queue:
                                 request_queue.remove((piece_index, begin, len(block)))
 
                             if complete:
                                 request_queue = [r for r in request_queue if r[0] != piece_index]
-                                print(f"[{peer_id}] PIECE {piece_index} COMPLETED — verifying hash...")
-
                                 piece_data = self.piece_manager.get_piece_data(piece_index)
                                 if self._verify_piece(piece_index, piece_data):
-                                    print(f"[{peer_id}] VERIFIED ✓ writing to disk...")
                                     self._write_piece(piece_index, piece_data)
                                     self._broadcast_have(piece_index)
                                 else:
-                                    print(f"[{peer_id}] HASH FAIL ✗ resetting piece...")
+                                    print(f"[{peer_id}] hash failed, resetting piece {piece_index}")
                                     self.piece_manager.reset_piece(piece_index)
 
                         except Exception as e:
@@ -340,8 +346,17 @@ class BitTorrentClient:
 
                 # request next blocks
                 if not peer.peer_choking:
+                    # drop stale requests so queue can move
+                    for pi, off, ln in list(request_queue):
+                        if self.piece_manager.is_block_stale(pi, off):
+                            print(f"{peer_id} cleared stale request piece={pi} off={off}")
+                            request_queue.remove((pi, off, ln))
+                            self.piece_manager.clear_block_pending(pi, off)
+
                     # pick a piece to download for this peer
                     piece_index = self._select_piece(peer)
+                    if piece_index is None:
+                        print(f"{peer_id} waiting for available piece (queue={len(request_queue)})")
 
                     # continue requesting blocks on already-active piece as well
                     if piece_index is None and request_queue:
@@ -368,7 +383,7 @@ class BitTorrentClient:
                                 peer.send_request(piece_index, offset, block_len)
                                 self.piece_manager.mark_block_requested(piece_index, offset, block_len)
                                 request_queue.append((piece_index, offset, block_len))
-                                print(f"[{peer_id}] REQUEST piece={piece_index} offset={offset} len={block_len}")
+                                print(f"{peer_id} requesting piece={piece_index} off={offset} len={block_len} q={len(request_queue)}")
                             except:
                                 self.piece_manager.reset_piece(piece_index)
                                 break
@@ -377,6 +392,13 @@ class BitTorrentClient:
 
 
                 now = time.time()
+                # if queued but no data for a while, drop requests to unblock
+                if request_queue and (now - last_data) > STALL_TIMEOUT:
+                    for pi, off, ln in list(request_queue):
+                        self.piece_manager.clear_block_pending(pi, off)
+                        request_queue.remove((pi, off, ln))
+                    print(f"{peer_id} stalled {STALL_TIMEOUT}s, cleared queue")
+
                 if now - last_keepalive > KEEPALIVE_INTERVAL:
                     try:
                         peer.send_keepalive()
@@ -395,6 +417,8 @@ class BitTorrentClient:
 
         finally:
             print(f"Stopped thread for {peer_id}")
+            for pi, off, ln in list(request_queue):
+                self.piece_manager.clear_block_pending(pi, off)
             try:
                 peer.close()
             except Exception:
@@ -476,6 +500,7 @@ class BitTorrentClient:
     def _monitor_progress(self):
         def monitor():
             last_downloaded = 0
+            stall_ticks = 0
             while not self._stop and not self.piece_manager.is_complete():
                 time.sleep(5)
                 with self._lock:
@@ -484,9 +509,18 @@ class BitTorrentClient:
                     last_downloaded = current
                     percent = (current / self.torrent.length) * 100 if self.torrent.length else 0
                     peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
+                    if speed == 0:
+                        stall_ticks += 1
+                    else:
+                        stall_ticks = 0
+                    if stall_ticks >= 1:  # ~5s stalled
+                        print("stall detected, resetting in-progress pieces")
+                        self.piece_manager.reset_in_progress()
+                        self._flush_requests = True
+                        stall_ticks = 0
                 print(
-                    f"PROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
-                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}"
+                    f"------------------------------------------\nPROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
+                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}\n------------------------------------------"
                 )
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)

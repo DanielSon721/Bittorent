@@ -111,7 +111,7 @@ class PieceManager:
         if offset in self.block_states[index]:
             self.block_states[index].pop(offset, None)
 
-    def reclaim_stale_blocks(self, max_age: float = 15.0):
+    def reclaim_stale_blocks(self, max_age: float = 10.0):
         now = time.time()
         for idx in range(self.total_pieces):
             if self.pieces_state[idx] != "requested":
@@ -122,6 +122,17 @@ class PieceManager:
             ]
             for off in stale_offsets:
                 self.block_states[idx].pop(off, None)
+            # if nothing is pending anymore, allow reselection
+            if not self.block_states[idx] and not self.is_piece_complete(idx):
+                print(f"resetting piece {idx} after stale requests")
+                self.pieces_state[idx] = "missing"
+
+    def reset_in_progress(self):
+        """reset requested pieces so they can be retried"""
+        for idx, state in enumerate(self.pieces_state):
+            if state == "requested":
+                self.pieces_state[idx] = "missing"
+                self.block_states[idx].clear()
 
     def add_block(self, index, begin, block):
         piece_len = self.piece_length(index)
