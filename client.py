@@ -114,15 +114,15 @@ class BitTorrentClient:
 
             # completed
             if self.piece_manager.is_complete():
-                print("\n[SUCCESS] Download complete!")
+                print("\nDownload complete!")
                 self._announce_completed()
 
         except KeyboardInterrupt:
-            print("\n[STOP] Interrupted by user")
+            print("\nInterrupted by user")
             self._stop = True
 
         except Exception as e:
-            print(f"\n[ERROR] Fatal error: {e}")
+            print(f"\nFatal error: {e}")
             import traceback
             traceback.print_exc()
             self._stop = True
@@ -172,26 +172,6 @@ class BitTorrentClient:
         self._reannounce_timer.daemon = True
         self._reannounce_timer.start()
 
-    def _reannounce_now(self):
-        left = max(0, self.torrent.length - self.downloaded)
-        peer_list = []
-        for tracker_url in self.torrent.announce_list:
-            self.tracker.announce_url = tracker_url
-            try:
-                peers = self.tracker.announce(downloaded=self.downloaded, left=left, uploaded=self.uploaded)
-                peer_list.extend(peers)
-            except Exception:
-                continue
-        peer_list = list(set(peer_list))
-        random.shuffle(peer_list)
-        for ip, port in peer_list:
-            if self._stop or len(self.peers) >= self.max_peers:
-                break
-            try:
-                self._connect_to_peer(ip, port)
-            except Exception:
-                pass
-
 
     # accept inbound peers
     def _start_listener(self):
@@ -208,7 +188,7 @@ class BitTorrentClient:
                 try:
                     conn, addr = server.accept()
                     ip, port = addr
-                    print(f"[INBOUND] Peer connected from {ip}:{port}")
+                    print(f"Peer connected from {ip}:{port}")
                     peer = PeerConnection.from_socket(
                         conn, ip, port,
                         self.torrent.info_hash,
@@ -471,7 +451,7 @@ class BitTorrentClient:
             with self._lock:
                 self.downloaded += len(data)
         except Exception as e:
-            print(f"[DISK] Error writing piece {piece_index}: {e}")
+            print(f"Error writing piece {piece_index}: {e}")
             self.piece_manager.reset_piece(piece_index)
 
     # send have to peers
@@ -493,8 +473,9 @@ class BitTorrentClient:
             peer.send_piece(index, begin, block)
             with self._lock:
                 self.uploaded += len(block)
+            print(f"UPLOAD | sent piece={index} off={begin} len={len(block)} to {peer.ip}:{peer.port}")
         except Exception as e:
-            print(f"[UPLOAD] Error handling request: {e}")
+            print(f"Error handling request while uploading: {e}")
 
     # progress monitor
     def _monitor_progress(self):
@@ -520,7 +501,7 @@ class BitTorrentClient:
                         stall_ticks = 0
                 print(
                     f"------------------------------------------\nPROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
-                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}\n------------------------------------------"
+                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count} | Uploaded: {self.uploaded} bytes\n------------------------------------------"
                 )
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
