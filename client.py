@@ -117,6 +117,7 @@ class BitTorrentClient:
                 self.downloaded = self._calculate_downloaded_bytes()
                 peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
                 self._print_progress(self.downloaded, 0.0, peers_count, final=True)
+                time.sleep(1)
                 print("\nDownload complete!")
                 self._announce_completed()
 
