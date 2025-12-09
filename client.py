@@ -113,6 +113,10 @@ class BitTorrentClient:
 
             # completed
             if self.piece_manager.is_complete():
+                # final progress line at 100%
+                self.downloaded = self._calculate_downloaded_bytes()
+                peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
+                self._print_progress(self.downloaded, 0.0, peers_count, final=True)
                 print("\nDownload complete!")
                 self._announce_completed()
 
@@ -443,6 +447,19 @@ class BitTorrentClient:
                 total += self._get_piece_length(idx)
         return total
 
+    def _print_progress(self, current: int, speed_bytes_per_s: float, peers_count: int, final: bool = False):
+        percent = (current / self.torrent.length) * 100 if self.torrent.length else 0
+        if final:
+            percent = 100.0
+            current = self.torrent.length
+            speed_bytes_per_s = 0.0
+        print(
+            "------------------------------------------------------------------------------------\n"
+            f"PROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
+            f"Speed: {speed_bytes_per_s/1024:.1f} KB/s | Peers: {peers_count}\n"
+            "------------------------------------------------------------------------------------"
+        )
+
     # verify piece hash
     def _verify_piece(self, piece_index: int, data: bytes) -> bool:
         expected_hash = self.torrent.pieces[piece_index]
@@ -512,10 +529,7 @@ class BitTorrentClient:
                         self.piece_manager.reset_in_progress()
                         self._flush_requests = True
                         stall_ticks = 0
-                print(
-                    f"------------------------------------------------------------------------------------\nPROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
-                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}\n------------------------------------------------------------------------------------"
-                )
+                self._print_progress(current, speed, peers_count)
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
         self._monitor_thread.start()
