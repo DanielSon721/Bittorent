@@ -129,6 +129,14 @@ class PieceManager:
                 logger.debug(f"resetting piece {idx} after stale requests")
                 self.pieces_state[idx] = "missing"
 
+    def has_pending_blocks(self) -> bool:
+        """Return True if any block is still marked pending."""
+        for states in self.block_states:
+            for meta in states.values():
+                if meta.get("state") == "pending":
+                    return True
+        return False
+
     def reset_in_progress(self):
         """reset requested pieces so they can be retried"""
         for idx, state in enumerate(self.pieces_state):

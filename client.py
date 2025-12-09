@@ -235,7 +235,7 @@ class BitTorrentClient:
 
         request_queue = []
         BLOCK_SIZE = 16384
-        MAX_PENDING = 32
+        MAX_PENDING = 64
         last_keepalive = time.time()
         KEEPALIVE_INTERVAL = 120
         last_data = time.time()
@@ -494,8 +494,10 @@ class BitTorrentClient:
                         stall_ticks += 1
                     else:
                         stall_ticks = 0
-                    if stall_ticks >= 1:  # ~5s stalled
-                        self.logger.debug("stall detected, resetting in-progress pieces")
+                    # Only reset in-progress pieces if we've been stalled for multiple checks
+                    # AND there are no pending blocks left (per-peer queues already cleared).
+                    if stall_ticks >= 3 and not self.piece_manager.has_pending_blocks():
+                        self.logger.debug("all peers stalled; resetting in-progress pieces")
                         self.piece_manager.reset_in_progress()
                         self._flush_requests = True
                         stall_ticks = 0
