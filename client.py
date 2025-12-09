@@ -243,7 +243,7 @@ class BitTorrentClient:
         last_keepalive = time.time()
         KEEPALIVE_INTERVAL = 120
         last_data = time.time()
-        STALL_TIMEOUT = 15
+        STALL_TIMEOUT = 8  # faster recovery from slow/stuck peers
 
         try:
             while (
@@ -377,9 +377,13 @@ class BitTorrentClient:
                 now = time.time()
                 # if queued but no data for a while, drop requests to unblock
                 if request_queue and (now - last_data) > STALL_TIMEOUT:
+                    stalled_pieces = {pi for pi, _, _ in request_queue}
                     for pi, off, ln in list(request_queue):
                         self.piece_manager.clear_block_pending(pi, off)
                         request_queue.remove((pi, off, ln))
+                    for pi in stalled_pieces:
+                        # allow other peers to pick up the piece without discarding data
+                        self.piece_manager.allow_piece_retry(pi)
                     self.logger.debug(f"{peer_id} stalled {STALL_TIMEOUT}s, cleared queue")
 
                 if now - last_keepalive > KEEPALIVE_INTERVAL:
@@ -522,10 +526,10 @@ class BitTorrentClient:
                         stall_ticks += 1
                     else:
                         stall_ticks = 0
-                    # Only reset in-progress pieces if we've been stalled for multiple checks
-                    # AND there are no pending blocks left (per-peer queues already cleared).
-                    if stall_ticks >= 3 and not self.piece_manager.has_pending_blocks():
-                        self.logger.debug("all peers stalled; resetting in-progress pieces")
+                    # Nudge stalled downloads sooner by clearing pending requests
+                    if stall_ticks >= 2:
+                        self.piece_manager.reclaim_stale_blocks(max_age=5.0)
+                        self.logger.debug("stalled; resetting in-progress pieces and flushing requests")
                         self.piece_manager.reset_in_progress()
                         self._flush_requests = True
                         stall_ticks = 0

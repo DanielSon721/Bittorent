@@ -175,6 +175,14 @@ class PieceManager:
         self.blocks_received[index].clear()
         self.block_states[index].clear()
 
+    def allow_piece_retry(self, index: int):
+        """
+        Mark a requested piece as missing so another peer can pick it up,
+        without discarding already downloaded blocks.
+        """
+        if 0 <= index < self.total_pieces and self.pieces_state[index] == "requested":
+            self.pieces_state[index] = "missing"
+
     def num_completed(self) -> int:
         return self.pieces_state.count("complete")
 
