@@ -1,9 +1,11 @@
 import hashlib
 import time
+import logging
 from typing import List, Optional
 from disk_io import DiskIO
 
 BLOCK_SIZE = 16384  # 16kb block
+logger = logging.getLogger("bittorrent")
 
 class PieceManager:
     # tracks piece status and data
@@ -124,7 +126,7 @@ class PieceManager:
                 self.block_states[idx].pop(off, None)
             # if nothing is pending anymore, allow reselection
             if not self.block_states[idx] and not self.is_piece_complete(idx):
-                print(f"resetting piece {idx} after stale requests")
+                logger.debug(f"resetting piece {idx} after stale requests")
                 self.pieces_state[idx] = "missing"
 
     def reset_in_progress(self):

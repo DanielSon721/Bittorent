@@ -1,6 +1,7 @@
 import threading
 import time
 import random
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 from tracker import TrackerClient
@@ -15,6 +16,9 @@ class BitTorrentClient:
         self.peer_id = peer_id  # peer id
         self.listen_port = listen_port  # listen port
         self.output_path = output_path or torrent.name  # output path
+        self.logger = logging.getLogger("bittorrent")
+        if not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
         # tracker client
         self.tracker = TrackerClient(
@@ -216,7 +220,7 @@ class BitTorrentClient:
                         return False
                     self.peers.append(pc)
 
-                print(f"{ip}:{port} connected!")
+                print(f"{ip}:{port} connected")
                 return True
             else:
                 return False
@@ -324,14 +328,14 @@ class BitTorrentClient:
                     # drop stale requests so queue can move
                     for pi, off, ln in list(request_queue):
                         if self.piece_manager.is_block_stale(pi, off):
-                            print(f"{peer_id} cleared stale request piece={pi} off={off}")
+                            self.logger.debug(f"{peer_id} cleared stale request piece={pi} off={off}")
                             request_queue.remove((pi, off, ln))
                             self.piece_manager.clear_block_pending(pi, off)
 
                     # pick a piece to download for this peer
                     piece_index = self._select_piece(peer)
                     if piece_index is None:
-                        print(f"{peer_id} waiting for available piece (queue={len(request_queue)})")
+                        self.logger.debug(f"{peer_id} waiting for available piece (queue={len(request_queue)})")
 
                     # continue requesting blocks on already-active piece as well
                     if piece_index is None and request_queue:
@@ -358,7 +362,7 @@ class BitTorrentClient:
                                 peer.send_request(piece_index, offset, block_len)
                                 self.piece_manager.mark_block_requested(piece_index, offset, block_len)
                                 request_queue.append((piece_index, offset, block_len))
-                                print(f"{peer_id} requesting piece={piece_index} off={offset} len={block_len} q={len(request_queue)}")
+                                self.logger.debug(f"{peer_id} requesting piece={piece_index} off={offset} len={block_len} q={len(request_queue)}")
                             except:
                                 self.piece_manager.reset_piece(piece_index)
                                 break
@@ -372,7 +376,7 @@ class BitTorrentClient:
                     for pi, off, ln in list(request_queue):
                         self.piece_manager.clear_block_pending(pi, off)
                         request_queue.remove((pi, off, ln))
-                    print(f"{peer_id} stalled {STALL_TIMEOUT}s, cleared queue")
+                    self.logger.info(f"{peer_id} stalled {STALL_TIMEOUT}s, cleared queue")
 
                 if now - last_keepalive > KEEPALIVE_INTERVAL:
                     try:
@@ -469,7 +473,7 @@ class BitTorrentClient:
             peer.send_piece(index, begin, block)
             with self._lock:
                 self.uploaded += len(block)
-            print(f"UPLOAD | {peer_id} piece={index} off={begin} len={len(block)} uploaded={self.uploaded}")
+            self.logger.debug(f"UPLOAD | {peer_id} piece={index} off={begin} len={len(block)} uploaded={self.uploaded}")
         except Exception as e:
             print(f"Error handling request while uploading: {e}")
 
@@ -496,8 +500,8 @@ class BitTorrentClient:
                         self._flush_requests = True
                         stall_ticks = 0
                 print(
-                    f"------------------------------------------\nPROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
-                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}\n------------------------------------------"
+                    f"------------------------------------------------------------------------------------\nPROGRESS | {percent:.3f}% | {current}/{self.torrent.length} bytes | "
+                    f"Speed: {speed/1024:.1f} KB/s | Peers: {peers_count}\n------------------------------------------------------------------------------------"
                 )
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
