@@ -231,7 +231,7 @@ class BitTorrentClient:
     # peer worker
     def _peer_worker(self, peer: PeerConnection):
         peer_id = f"{peer.ip}:{peer.port}"
-        print(f"Started thread for {peer_id}")
+        self.logger.debug(f"Started thread for {peer_id}")
 
         request_queue = []
         BLOCK_SIZE = 16384
@@ -376,7 +376,7 @@ class BitTorrentClient:
                     for pi, off, ln in list(request_queue):
                         self.piece_manager.clear_block_pending(pi, off)
                         request_queue.remove((pi, off, ln))
-                    self.logger.info(f"{peer_id} stalled {STALL_TIMEOUT}s, cleared queue")
+                    self.logger.debug(f"{peer_id} stalled {STALL_TIMEOUT}s, cleared queue")
 
                 if now - last_keepalive > KEEPALIVE_INTERVAL:
                     try:
@@ -395,7 +395,7 @@ class BitTorrentClient:
                 print(f"[{peer_id}] Worker thread error: {e}")
 
         finally:
-            print(f"Stopped thread for {peer_id}")
+            self.logger.debug(f"Stopped thread for {peer_id}")
             for pi, off, ln in list(request_queue):
                 self.piece_manager.clear_block_pending(pi, off)
             try:
@@ -495,7 +495,7 @@ class BitTorrentClient:
                     else:
                         stall_ticks = 0
                     if stall_ticks >= 1:  # ~5s stalled
-                        print("stall detected, resetting in-progress pieces")
+                        self.logger.debug("stall detected, resetting in-progress pieces")
                         self.piece_manager.reset_in_progress()
                         self._flush_requests = True
                         stall_ticks = 0
