@@ -243,7 +243,7 @@ class BitTorrentClient:
         last_keepalive = time.time()
         KEEPALIVE_INTERVAL = 120
         last_data = time.time()
-        STALL_TIMEOUT = 8  # faster recovery from slow/stuck peers
+        STALL_TIMEOUT = 8
 
         try:
             while (
