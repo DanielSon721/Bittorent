@@ -37,7 +37,7 @@ class PeerConnection:
             self._send_handshake()
 
             if not self._recv_handshake():
-                print(f"Handshake rejected by peer {self.ip}:{self.port}")
+                print(f"Handshake rejected by {self.ip}:{self.port}")
                 self.close()
                 return False
 

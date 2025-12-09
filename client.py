@@ -1,6 +1,7 @@
 import threading
 import time
 import random
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 from tracker import TrackerClient
 from peer_connection import PeerConnection
@@ -72,19 +73,13 @@ class BitTorrentClient:
                 print("ERROR | No peers received from any tracker. Exiting.")
                 return
 
-            print(f"TRACKER | Total peers received: {len(peer_list)}")
+            print(f"Total peers received: {len(peer_list)}")
 
             self._start_listener()
 
             # connect to peers
-            print("\nPEERS | Connecting to peers...")
-            for ip, port in peer_list[:50]:
-                if self._stop or len(self.peers) >= self.max_peers:
-                    break
-                try:
-                    self._connect_to_peer(ip, port)
-                except Exception as e:
-                    pass
+            print("\nConnecting to peers...")
+            self._connect_to_peers_parallel(peer_list[:50])
 
             print(f"Connected to {len(self.peers)} peers")
             if not self.peers:
@@ -153,13 +148,7 @@ class BitTorrentClient:
             peer_list = list(set(peer_list))
             random.shuffle(peer_list)
 
-            for ip, port in peer_list:
-                if self._stop or len(self.peers) >= self.max_peers:
-                    break
-                try:
-                    self._connect_to_peer(ip, port)
-                except Exception:
-                    pass
+            self._connect_to_peers_parallel(peer_list)
 
             if not self._stop:
                 interval = self.tracker.get_interval() or 120
@@ -208,6 +197,9 @@ class BitTorrentClient:
 
     # outbound peer connect
     def _connect_to_peer(self, ip: str, port: int) -> bool:
+        with self._lock:
+            if self._stop or len(self.peers) >= self.max_peers:
+                return False
         try:
             pc = PeerConnection(ip, port, self.torrent.info_hash, self.peer_id)
             if pc.connect(timeout=self.connect_timeout):
@@ -219,9 +211,12 @@ class BitTorrentClient:
 
                 pc.send_interested()
                 with self._lock:
+                    if self._stop or len(self.peers) >= self.max_peers:
+                        pc.close()
+                        return False
                     self.peers.append(pc)
 
-                print(f"CONNECT | {ip}:{port} ok")
+                print(f"{ip}:{port} connected!")
                 return True
             else:
                 return False
@@ -507,6 +502,24 @@ class BitTorrentClient:
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
         self._monitor_thread.start()
+
+    def _connect_to_peers_parallel(self, peer_list, max_workers: int = 20):
+        if not peer_list:
+            return
+        worker_count = max(1, min(max_workers, len(peer_list)))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = []
+            for ip, port in peer_list:
+                with self._lock:
+                    if self._stop or len(self.peers) >= self.max_peers:
+                        break
+                futures.append(executor.submit(self._connect_to_peer, ip, port))
+
+            for future in futures:
+                try:
+                    future.result()
+                except Exception:
+                    continue
 
 
     def _announce_completed(self):
