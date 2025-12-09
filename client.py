@@ -436,6 +436,13 @@ class BitTorrentClient:
         else:
             return self.torrent.piece_length
 
+    def _calculate_downloaded_bytes(self) -> int:
+        total = 0
+        for idx in range(self.torrent.num_pieces()):
+            if self.piece_manager.is_piece_complete(idx):
+                total += self._get_piece_length(idx)
+        return total
+
     # verify piece hash
     def _verify_piece(self, piece_index: int, data: bytes) -> bool:
         expected_hash = self.torrent.pieces[piece_index]
@@ -444,11 +451,13 @@ class BitTorrentClient:
 
     # write verified piece
     def _write_piece(self, piece_index: int, data: bytes):
+        if self.piece_manager.is_piece_complete(piece_index):
+            return
         try:
             self.disk.write_piece(piece_index, data, self.torrent.piece_length)
             self.piece_manager.mark_piece_complete(piece_index)
             with self._lock:
-                self.downloaded += len(data)
+                self.downloaded = self._calculate_downloaded_bytes()
         except Exception as e:
             print(f"Error writing piece {piece_index}: {e}")
             self.piece_manager.reset_piece(piece_index)
@@ -485,6 +494,8 @@ class BitTorrentClient:
             while not self._stop and not self.piece_manager.is_complete():
                 time.sleep(5)
                 with self._lock:
+                    # recalc in case counts drift
+                    self.downloaded = self._calculate_downloaded_bytes()
                     current = self.downloaded
                     speed = (current - last_downloaded) / 5.0
                     last_downloaded = current
