@@ -529,6 +529,8 @@ class BitTorrentClient:
                         self.piece_manager.reset_in_progress()
                         self._flush_requests = True
                         stall_ticks = 0
+                    if self._stop or self.piece_manager.is_complete():
+                        break
                 self._print_progress(current, speed, peers_count)
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
