@@ -63,6 +63,10 @@ class PieceManager:
         if self.pieces_state[index] == "missing":
             self.pieces_state[index] = "requested"
 
+    def incomplete_pieces_count(self) -> int:
+        """Return number of pieces not yet complete."""
+        return self.total_pieces - self.pieces_state.count("complete")
+
     # availability helpers
     def update_peer_bitfield(self, old: List[bool], new: List[bool]):
         if len(new) < self.total_pieces:
