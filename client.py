@@ -18,7 +18,7 @@ class BitTorrentClient:
         self.listen_port = listen_port  # listen port
         self.output_path = output_path or torrent.name  # output path
         self.seed_mode = seed_mode  # seeding flag
-        self.extra_peers = extra_peers or []  # manually supplied peers
+        self.manual_peers = self._parse_extra_peers(extra_peers or [])  # manually supplied peers
         self.logger = logging.getLogger("bittorrent")
         if not logging.getLogger().handlers:
             logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -76,39 +76,38 @@ class BitTorrentClient:
             # announce to trackers
             print("\nAnnouncing to trackers...")
             left = 0 if self.seed_mode else max(0, self.torrent.length - self.downloaded)
-            peer_list = []
+            tracker_peers = []
 
             for tracker_url in self.torrent.announce_list:
                 self.tracker.announce_url = tracker_url
                 try:
                     peers = self.tracker.announce(downloaded=self.downloaded, left=left, uploaded=self.uploaded, event="started")
-                    peer_list.extend(peers)
+                    tracker_peers.extend(peers)
                 except Exception as e:
                     print(f"Failed to announce to {tracker_url}: {e}")
 
-            # append any manual peers (ip:port strings)
-            for entry in self.extra_peers:
-                try:
-                    ip, port = entry.split(":")
-                    peer_list.append((ip, int(port)))
-                except Exception:
-                    print(f"Invalid --peer entry ignored: {entry}")
-            
-            # remove duplicates
-            peer_list = list(set(peer_list))
-            random.shuffle(peer_list)
+            # shuffle tracker peers, but keep manual peers first and always tried
+            random.shuffle(tracker_peers)
+            peer_list = self._dedupe_peers(self.manual_peers + tracker_peers)
 
             if not peer_list:
                 print("ERROR | No peers received from any tracker. Exiting.")
                 return
 
             print(f"Total peers received: {len(peer_list)}")
+            if self.manual_peers:
+                print(f"Manual peers supplied: {len(self.manual_peers)} (tried first)")
 
             self._start_listener()
 
             # connect to peers
             print("\nConnecting to peers...")
-            self._connect_to_peers_parallel(peer_list[:50])
+            # always try manual peers, then fill remaining slots with tracker peers
+            if self.manual_peers:
+                self._connect_to_peers_parallel(self.manual_peers, max_workers=min(10, len(self.manual_peers)))
+            remaining = [p for p in peer_list if p not in self.manual_peers]
+            if remaining:
+                self._connect_to_peers_parallel(remaining[:50])
 
             print(f"Connected to {len(self.peers)} peers")
             if not self.peers:
@@ -204,9 +203,8 @@ class BitTorrentClient:
                 except Exception:
                     continue
 
-            # remove duplicates
-            peer_list = list(set(peer_list))
             random.shuffle(peer_list)
+            peer_list = self._dedupe_peers(self.manual_peers + peer_list)
 
             self._connect_to_peers_parallel(peer_list)
 
@@ -604,30 +602,41 @@ class BitTorrentClient:
     def _monitor_progress(self):
         def monitor():
             last_downloaded = 0
+            last_uploaded = 0
             stall_ticks = 0
-            while not self._stop and not self.piece_manager.is_complete():
+            while not self._stop:
                 time.sleep(5)
                 with self._lock:
+                    peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
+                    uploaded = self.uploaded
                     # recalc in case counts drift
                     self.downloaded = self._calculate_downloaded_bytes()
                     current = self.downloaded
-                    speed = (current - last_downloaded) / 5.0
-                    last_downloaded = current
-                    percent = (current / self.torrent.length) * 100 if self.torrent.length else 0
-                    peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
-                    if speed == 0:
-                        stall_ticks += 1
-                    else:
-                        stall_ticks = 0
-                    # Nudge stalled downloads sooner by clearing pending requests
-                    if stall_ticks >= 2:
-                        self.piece_manager.reclaim_stale_blocks(max_age=5.0)
-                        self.logger.debug("stalled; resetting in-progress pieces and flushing requests")
-                        self.piece_manager.reset_in_progress()
-                        self._flush_requests = True
-                        stall_ticks = 0
-                    if self._stop or self.piece_manager.is_complete():
-                        break
+
+                # simple upload heartbeat while seeding so we can see progress
+                if self.seed_mode:
+                    uploaded_delta = uploaded - last_uploaded
+                    if uploaded_delta > 0:
+                        print(f"Uploading to peers... uploaded {uploaded} bytes (+{uploaded_delta} in last 5s) | Peers: {peers_count}")
+                        last_uploaded = uploaded
+                    continue
+
+                speed = (current - last_downloaded) / 5.0
+                last_downloaded = current
+                percent = (current / self.torrent.length) * 100 if self.torrent.length else 0
+                if speed == 0:
+                    stall_ticks += 1
+                else:
+                    stall_ticks = 0
+                # Nudge stalled downloads sooner by clearing pending requests
+                if stall_ticks >= 2:
+                    self.piece_manager.reclaim_stale_blocks(max_age=5.0)
+                    self.logger.debug("stalled; resetting in-progress pieces and flushing requests")
+                    self.piece_manager.reset_in_progress()
+                    self._flush_requests = True
+                    stall_ticks = 0
+                if self._stop or self.piece_manager.is_complete():
+                    break
                 self._print_progress(current, speed, peers_count)
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
@@ -650,6 +659,25 @@ class BitTorrentClient:
                     future.result()
                 except Exception:
                     continue
+
+    def _dedupe_peers(self, peers):
+        seen = set()
+        result = []
+        for peer in peers:
+            if peer not in seen:
+                result.append(peer)
+                seen.add(peer)
+        return result
+
+    def _parse_extra_peers(self, entries):
+        peers = []
+        for entry in entries:
+            try:
+                ip, port = entry.split(":")
+                peers.append((ip, int(port)))
+            except Exception:
+                print(f"Invalid --peer entry ignored: {entry}")
+        return peers
 
 
     def _announce_completed(self):
