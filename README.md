@@ -1,0 +1,1 @@
+participating in the decentralized BitTorrent network, acting as both a downloader (leecher) and uploader (seeder) of file pieces, communicating via a peer-to-peer (P2P) system to share data efficiently without central servers
