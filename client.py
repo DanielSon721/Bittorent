@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import random
@@ -11,11 +12,13 @@ from disk_io import DiskIO
 import hashlib
 
 class BitTorrentClient:
-    def __init__(self, torrent, peer_id: bytes, listen_port: int, output_path: Optional[str] = None, max_peers: int = 100):
+    def __init__(self, torrent, peer_id: bytes, listen_port: int, output_path: Optional[str] = None, max_peers: int = 100, seed_mode: bool = False, extra_peers: Optional[list] = None):
         self.torrent = torrent
         self.peer_id = peer_id  # peer id
         self.listen_port = listen_port  # listen port
         self.output_path = output_path or torrent.name  # output path
+        self.seed_mode = seed_mode  # seeding flag
+        self.extra_peers = extra_peers or []  # manually supplied peers
         self.logger = logging.getLogger("bittorrent")
         if not logging.getLogger().handlers:
             logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -29,7 +32,12 @@ class BitTorrentClient:
         )
 
         self.piece_manager = PieceManager(torrent)  # piece state
-        self.disk = DiskIO(self.output_path, torrent.length)  # disk writer
+        self.disk = DiskIO(
+            self.output_path,
+            torrent.length,
+            preallocate=not seed_mode,
+            truncate=not seed_mode,
+        )  # disk writer
         self.peers: List[PeerConnection] = []  # active peers
 
         # control flags
@@ -55,10 +63,17 @@ class BitTorrentClient:
         print(f"Total size: {self.torrent.length} bytes ({self.torrent.num_pieces()} pieces)")
         self.start_time = time.time()
 
+        if self.seed_mode:
+            try:
+                self._initialize_seeding_state()
+            except Exception as e:
+                print(f"Seeding initialization failed: {e}")
+                return
+
         try:
             # announce to trackers
             print("\nAnnouncing to trackers...")
-            left = max(0, self.torrent.length - self.downloaded)
+            left = 0 if self.seed_mode else max(0, self.torrent.length - self.downloaded)
             peer_list = []
 
             for tracker_url in self.torrent.announce_list:
@@ -68,6 +83,14 @@ class BitTorrentClient:
                     peer_list.extend(peers)
                 except Exception as e:
                     print(f"Failed to announce to {tracker_url}: {e}")
+
+            # append any manual peers (ip:port strings)
+            for entry in self.extra_peers:
+                try:
+                    ip, port = entry.split(":")
+                    peer_list.append((ip, int(port)))
+                except Exception:
+                    print(f"Invalid --peer entry ignored: {entry}")
             
             # remove duplicates
             peer_list = list(set(peer_list))
@@ -108,11 +131,13 @@ class BitTorrentClient:
             self._monitor_progress()
 
             # main wait loop
-            while not self._stop and not self.piece_manager.is_complete():
+            while not self._stop:
+                if (not self.seed_mode) and self.piece_manager.is_complete():
+                    break
                 time.sleep(0.5)
 
             # completed
-            if self.piece_manager.is_complete():
+            if (not self.seed_mode) and self.piece_manager.is_complete():
                 # final progress line at 100%
                 self.downloaded = self._calculate_downloaded_bytes()
                 peers_count = len([p for p in self.peers if getattr(p, "connected", False)])
@@ -134,6 +159,30 @@ class BitTorrentClient:
         finally:
             print("\nShutting down client...")
             self._cleanup()
+
+
+    def _initialize_seeding_state(self):
+        print("Validating existing data for seeding...")
+        if not os.path.exists(self.output_path):
+            raise FileNotFoundError(f"Payload not found at {self.output_path}")
+
+        actual_size = os.path.getsize(self.output_path)
+        if actual_size < self.torrent.length:
+            raise ValueError(f"Payload size ({actual_size}) smaller than torrent length ({self.torrent.length})")
+        if actual_size > self.torrent.length:
+            self.logger.warning("Payload size larger than torrent length; extra bytes will be ignored")
+
+        for idx in range(self.torrent.num_pieces()):
+            expected_len = self._get_piece_length(idx)
+            data = self.disk.read_piece(idx, expected_len)
+            if len(data) < expected_len:
+                raise ValueError(f"Piece {idx} shorter than expected length {expected_len}")
+            if not self._verify_piece(idx, data):
+                raise ValueError(f"Hash mismatch for piece {idx}; cannot seed with corrupt data")
+
+        self.piece_manager.mark_all_complete()
+        self.downloaded = self.torrent.length
+        print("All pieces verified. Ready to seed.")
 
 
     # tracker reannounce
@@ -192,6 +241,14 @@ class BitTorrentClient:
                         self.torrent.info_hash,
                         self.peer_id
                     )
+                    try:
+                        bitfield = self.piece_manager.get_bitfield()
+                        peer.send_bitfield(bitfield)
+                        if self.seed_mode or self.piece_manager.has_any_pieces():
+                            peer.send_unchoke()
+                            peer.am_choking = False
+                    except Exception:
+                        pass
                     with self._lock:
                         self.peers.append(peer)
                     t = threading.Thread(target=self._peer_worker, args=(peer,), daemon=True)
@@ -217,8 +274,15 @@ class BitTorrentClient:
                     pc.send_bitfield(bitfield)
                 except Exception:
                     pass
+                if self.seed_mode or self.piece_manager.has_any_pieces():
+                    try:
+                        pc.send_unchoke()
+                        pc.am_choking = False
+                    except Exception:
+                        pass
 
-                pc.send_interested()
+                if not self.seed_mode:
+                    pc.send_interested()
                 with self._lock:
                     if self._stop or len(self.peers) >= self.max_peers:
                         pc.close()
@@ -249,7 +313,7 @@ class BitTorrentClient:
         try:
             while (
                 not self._stop
-                and not self.piece_manager.is_complete()
+                and (self.seed_mode or not self.piece_manager.is_complete())
                 and peer.connected
             ):
                 if self._flush_requests:
@@ -275,9 +339,12 @@ class BitTorrentClient:
 
                     elif mtype == "interested":
                         peer.peer_interested = True
+                        if self.seed_mode or self.piece_manager.has_any_pieces():
+                            self._unchoke_peer(peer)
 
                     elif mtype == "not_interested":
                         peer.peer_interested = False
+                        self._choke_peer(peer)
 
                     elif mtype == "have":
                         piece_index = msg["piece_index"]
@@ -329,7 +396,7 @@ class BitTorrentClient:
                         pass
 
                 # request next blocks
-                if not peer.peer_choking:
+                if not peer.peer_choking and not self.seed_mode:
                     # drop stale requests so queue can move
                     for pi, off, ln in list(request_queue):
                         if self.piece_manager.is_block_stale(pi, off):
@@ -377,7 +444,7 @@ class BitTorrentClient:
 
                 now = time.time()
                 # if queued but no data for a while, drop requests to unblock
-                if request_queue and (now - last_data) > STALL_TIMEOUT:
+                if not self.seed_mode and request_queue and (now - last_data) > STALL_TIMEOUT:
                     stalled_pieces = {pi for pi, _, _ in request_queue}
                     for pi, off, ln in list(request_queue):
                         self.piece_manager.clear_block_pending(pi, off)
@@ -493,13 +560,30 @@ class BitTorrentClient:
                 except Exception:
                     pass
 
+    def _unchoke_peer(self, peer: PeerConnection):
+        try:
+            peer.send_unchoke()
+            peer.am_choking = False
+        except Exception:
+            pass
+
+    def _choke_peer(self, peer: PeerConnection):
+        try:
+            peer.send_choke()
+            peer.am_choking = True
+        except Exception:
+            pass
+
     # serve incoming request
     def _handle_request(self, peer: PeerConnection, index: int, begin: int, length: int):
         try:
             if not self.piece_manager.is_piece_complete(index):
                 return
+            piece_len = self._get_piece_length(index)
+            if begin < 0 or length <= 0 or begin + length > piece_len:
+                return
             peer_id = f"{peer.ip}:{peer.port}"
-            piece_data = self.disk.read_piece(index, self.torrent.piece_length)
+            piece_data = self.disk.read_piece(index, piece_len)
             block = piece_data[begin : begin + length]
             peer.send_piece(index, begin, block)
             with self._lock:

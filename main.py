@@ -9,6 +9,11 @@ def parse_args():
     parser.add_argument("torrent", help=".torrent file path")
     parser.add_argument("-o", "--output", help="Output file path (optional)")
     parser.add_argument("--port", type=int, default=6881, help="Listening port")
+    parser.add_argument(
+        "--peer",
+        action="append",
+        help="Manual peer in ip:port form (can be given multiple times)",
+    )
     return parser.parse_args()
 
 def prompt_mode() -> str:
@@ -41,18 +46,28 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    if mode == "upload":
-        print("Upload mode")
-        return
-
     torrent = TorrentMeta.from_file(args.torrent)
     peer_id = torrent.generate_peer_id()
+
+    if mode == "upload":
+        payload_path = args.output or torrent.name
+        client = BitTorrentClient(
+            torrent=torrent,
+            peer_id=peer_id,
+            listen_port=args.port,
+            output_path=payload_path,
+            seed_mode=True,
+            extra_peers=args.peer,
+        )
+        client.run()
+        return
 
     client = BitTorrentClient(
         torrent=torrent,
         peer_id=peer_id,
         listen_port=args.port,
         output_path=args.output,
+        extra_peers=args.peer,
     )
 
     client.run()

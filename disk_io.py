@@ -1,15 +1,24 @@
 import os
 
+
 class DiskIO:
     # handles file io for pieces
-    def __init__(self, path: str, total_length: int, preallocate: bool = True):
+    def __init__(self, path: str, total_length: int, preallocate: bool = True, truncate: bool = True):
         self.path = path
         self.total_length = total_length
         self.preallocate = preallocate
+        self.truncate = truncate
 
-        self.file = open(self.path, "wb+")
+        if not truncate and not os.path.exists(self.path):
+            raise FileNotFoundError(f"Existing file required for seeding: {self.path}")
 
-        if self.preallocate:
+        mode = "wb+"
+        if not truncate:
+            mode = "r+b"
+
+        self.file = open(self.path, mode)
+
+        if self.preallocate and self.truncate:
             self._preallocate_file()
 
     def _preallocate_file(self):

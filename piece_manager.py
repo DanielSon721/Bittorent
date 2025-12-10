@@ -2,7 +2,6 @@ import hashlib
 import time
 import logging
 from typing import List, Optional
-from disk_io import DiskIO
 
 BLOCK_SIZE = 16384  # 16kb block
 logger = logging.getLogger("bittorrent")
@@ -13,8 +12,6 @@ class PieceManager:
         self.torrent = torrent_meta  # torrent meta
         self.total_pieces = torrent_meta.num_pieces()  # piece count
         self.pieces_state = ["missing"] * self.total_pieces  # missing/requested/complete
-
-        self.writer = DiskIO(torrent_meta.name, torrent_meta.length)
 
         self.buffers = [dict() for _ in range(self.total_pieces)]  # not used
         self.pieces_data = [None] * self.total_pieces
@@ -49,6 +46,10 @@ class PieceManager:
 
     def has_any_pieces(self) -> bool:
         return "complete" in self.pieces_state
+
+    def mark_all_complete(self):
+        """Mark every piece as complete (used for seeding after validation)."""
+        self.pieces_state = ["complete"] * self.total_pieces
 
     def get_bitfield(self):
         return [state == "complete" for state in self.pieces_state]

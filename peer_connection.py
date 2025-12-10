@@ -115,7 +115,10 @@ class PeerConnection:
         self._send(4, struct.pack("!I", index))
 
     def send_bitfield(self, bitfield: List[bool]):
-        payload = bytes([int("".join("1" if b else "0" for b in bitfield)[i:i+8],2) for i in range(0,len(bitfield),8)])
+        bits = "".join("1" if b else "0" for b in bitfield)
+        if len(bits) % 8 != 0:
+            bits = bits.ljust(len(bits) + (8 - (len(bits) % 8)), "0")
+        payload = bytes(int(bits[i : i + 8], 2) for i in range(0, len(bits), 8))
         self._send(5, payload)
 
     def send_request(self, index: int, begin: int, length: int):
