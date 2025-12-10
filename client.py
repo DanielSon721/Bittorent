@@ -470,7 +470,7 @@ class BitTorrentClient:
 
         except Exception as e:
             if not self._stop:
-                print(f"[{peer_id}] Worker thread error: {e}")
+                self.logger.debug(f"[{peer_id}] Worker thread error: {e}")
 
         finally:
             self.logger.debug(f"Stopped thread for {peer_id}")
@@ -598,7 +598,7 @@ class BitTorrentClient:
                         self._last_upload_print = now
             self.logger.debug(f"UPLOAD | {peer_id} piece={index} off={begin} len={len(block)} uploaded={self.uploaded}")
         except Exception as e:
-            print(f"Error handling request while uploading: {e}")
+            self.logger.debug(f"Upload handling error: {e}")
 
     # progress monitor
     def _monitor_progress(self):
