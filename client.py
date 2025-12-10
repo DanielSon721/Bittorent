@@ -51,6 +51,8 @@ class BitTorrentClient:
         self.downloaded = 0
         self.uploaded = 0
         self.start_time = None
+        self._upload_notice_shown = False
+        self._last_upload_print = 0.0
 
         # limits
         self.max_peers = max_peers
@@ -588,6 +590,12 @@ class BitTorrentClient:
             peer.send_piece(index, begin, block)
             with self._lock:
                 self.uploaded += len(block)
+                if not self.logger.isEnabledFor(logging.DEBUG):
+                    now = time.time()
+                    if (not self._upload_notice_shown) or (now - self._last_upload_print >= 5):
+                        print(f"Uploading to peers... uploaded {self.uploaded} bytes")
+                        self._upload_notice_shown = True
+                        self._last_upload_print = now
             self.logger.debug(f"UPLOAD | {peer_id} piece={index} off={begin} len={len(block)} uploaded={self.uploaded}")
         except Exception as e:
             print(f"Error handling request while uploading: {e}")
