@@ -48,7 +48,6 @@ class PieceManager:
         return "complete" in self.pieces_state
 
     def mark_all_complete(self):
-        """Mark every piece as complete (used for seeding after validation)."""
         self.pieces_state = ["complete"] * self.total_pieces
 
     def get_bitfield(self):
@@ -65,7 +64,6 @@ class PieceManager:
             self.pieces_state[index] = "requested"
 
     def incomplete_pieces_count(self) -> int:
-        """Return number of pieces not yet complete."""
         return self.total_pieces - self.pieces_state.count("complete")
 
     # availability helpers
@@ -135,7 +133,6 @@ class PieceManager:
                 self.pieces_state[idx] = "missing"
 
     def has_pending_blocks(self) -> bool:
-        """Return True if any block is still marked pending."""
         for states in self.block_states:
             for meta in states.values():
                 if meta.get("state") == "pending":
@@ -143,7 +140,6 @@ class PieceManager:
         return False
 
     def reset_in_progress(self):
-        """reset requested pieces so they can be retried"""
         for idx, state in enumerate(self.pieces_state):
             if state == "requested":
                 self.pieces_state[idx] = "missing"
@@ -181,10 +177,6 @@ class PieceManager:
         self.block_states[index].clear()
 
     def allow_piece_retry(self, index: int):
-        """
-        Mark a requested piece as missing so another peer can pick it up,
-        without discarding already downloaded blocks.
-        """
         if 0 <= index < self.total_pieces and self.pieces_state[index] == "requested":
             self.pieces_state[index] = "missing"
 

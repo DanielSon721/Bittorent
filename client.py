@@ -96,7 +96,7 @@ class BitTorrentClient:
 
             print(f"Total peers received: {len(peer_list)}")
             if self.manual_peers:
-                print(f"Manual peers supplied: {len(self.manual_peers)} (tried first)")
+                print(f"Manual peers supplied: {len(self.manual_peers)}")
 
             self._start_listener()
 
@@ -617,7 +617,7 @@ class BitTorrentClient:
                 if self.seed_mode:
                     uploaded_delta = uploaded - last_uploaded
                     if uploaded_delta > 0:
-                        print(f"Uploading to peers... uploaded {uploaded} bytes (+{uploaded_delta} in last 5s) | Peers: {peers_count}")
+                        print(f"Uploading to peers... uploaded {uploaded} bytes")
                         last_uploaded = uploaded
                     continue
 
